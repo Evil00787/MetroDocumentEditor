@@ -3,6 +3,9 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Drive.v3;
 using Google.Apis.Services;
 using Google.Apis.Util.Store;
+using HtmlAgilityPack;
+using iTextSharp.text;
+using iTextSharp.text.pdf;
 using MahApps.Metro.Controls;
 using MahApps.Metro.Controls.Dialogs;
 using Microsoft.Win32;
@@ -10,7 +13,9 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,7 +49,7 @@ namespace DC2 {
 		int unsavedChanges = 0;
 		DriveService service;
 
-		static string[] Scopes = { DriveService.Scope.DriveReadonly };
+		string[] scopes = new string[] { DriveService.Scope.Drive };
 		static string ApplicationName = "Drive API .NET Quickstart";
 
 		IList<Google.Apis.Drive.v3.Data.File> googleFiles;
@@ -77,6 +82,9 @@ namespace DC2 {
 				LoadToFormularz(formularz, Path.GetFileNameWithoutExtension(filePath));
 			}
 		}
+
+
+
 
 
 		private void LoadToFormularz(typ_formularza formularz, string name) {
@@ -201,6 +209,65 @@ namespace DC2 {
 			using (FileStream fs = new FileStream(filename, FileMode.Create)) {
 				using (TextWriter writer = new StreamWriter(fs, new UTF8Encoding())) {
 					try { serializer.Serialize(writer, formularz); }
+					catch {
+						Console.WriteLine("Error writing");
+					}
+				}
+			}
+
+			return true;
+		}
+
+		private bool SerializeObjectDrive(string filename) {
+			Console.WriteLine("Writing With TextWriter");
+
+			XmlSerializer serializer =
+			new XmlSerializer(typeof(typ_formularza));
+			typ_formularza formularz = new typ_formularza();
+			formularz.Imie_nazwisko = now_editing.Imie_nazwisko;
+			formularz.Adres = now_editing.Adres;
+			formularz.Kontakt = now_editing.Kontakt;
+			formularz.Opis = now_editing.Opis;
+			formularz.Skrót_opisu = now_editing.Skrót_opisu;
+			formularz.Lokalizacja = now_editing.Lokalizacja;
+			formularz.Tytuł = now_editing.Tytuł;
+			formularz.Własność_terenu = now_editing.Własność_terenu;
+			formularz.Koszta_projektu = new typ_koszta_projektu();
+			formularz.Koszta_projektu.Items = new typ_koszt[kosztList.Count];
+
+
+
+			int i = 0;
+			foreach (typ_koszt k in kosztList) {
+				formularz.Koszta_projektu.Items[i] = k;
+				i++;
+			}
+
+			string mimetype = "text/xml";
+			/* Create a StreamWriter to write with. First create a FileStream
+			   object, and create the StreamWriter specifying an Encoding to use. */
+			using (MemoryStream fs = new MemoryStream()) {
+				using (TextWriter writer = new StreamWriter(fs, new UTF8Encoding())) {
+					try {
+						serializer.Serialize(writer, formularz);
+						fs.Flush();
+						FilesResource.CreateMediaUpload createMU;
+						var uploadedFile = new Google.Apis.Drive.v3.Data.File();
+						uploadedFile.Name = filename + ".xml";
+						uploadedFile.MimeType = mimetype;
+						createMU = service.Files.Create(uploadedFile, fs, mimetype);
+						createMU.Fields = "id";
+						try {
+							var x = createMU.Upload();
+							var remoteFile = createMU.ResponseBody;
+							Console.WriteLine("File uploaded successfully (File ID: " + remoteFile.Id + ")");
+							return true;
+						}
+						catch (Exception e) {
+							Console.WriteLine("File could not be uploaded (" + e.Message + ")");
+							return false;
+						}
+					}
 					catch {
 						Console.WriteLine("Error writing");
 					}
@@ -366,7 +433,7 @@ namespace DC2 {
 				string credPath = "token.json";
 				credential = GoogleWebAuthorizationBroker.AuthorizeAsync(
 					GoogleClientSecrets.Load(stream).Secrets,
-					Scopes,
+					scopes,
 					"user",
 					CancellationToken.None,
 					new FileDataStore(credPath, true)).Result;
@@ -406,7 +473,18 @@ namespace DC2 {
 			}
 			else if (e.Action == NotifyCollectionChangedAction.Remove) {
 				deleteValidationTab(e.OldStartingIndex);
+				float suma = 0;
+				foreach (var item in kosztList) {
+					float temp;
+					if (float.TryParse(item.kwota, NumberStyles.Any, CultureInfo.InvariantCulture, out temp)) {
+						suma += temp;
+					}
+				}
+				output.Text = "Suma: " + suma.ToString();
+
 			}
+
+
 		}
 
 
@@ -426,6 +504,16 @@ namespace DC2 {
 		private void changeValidationTab(int index, string name, bool valid) {
 			if (index >= 0) {
 				tabVal[index][name] = valid;
+			}
+			if (name == "kwota") {
+				float suma = 0;
+				foreach (var item in kosztList) {
+					float temp;
+					if (float.TryParse(item.kwota, NumberStyles.Any, CultureInfo.InvariantCulture, out temp)) {
+						suma += temp;
+					}
+				}
+				output.Text = "Suma: " + suma.ToString();
 			}
 		}
 
@@ -451,6 +539,9 @@ namespace DC2 {
 		private void changeValidationDict(string name, bool valid) {
 			if (validation.ContainsKey(name)) {
 				validation[name] = valid;
+				if (name == "Kod_pocztowy" && valid) {
+					parseHTML(now_editing.Adres.Kod_pocztowy);
+				}
 			}
 			else {
 				validation.Add(name, valid);
@@ -659,6 +750,7 @@ namespace DC2 {
 			Drive_flyout.IsOpen = true;
 			googleFiles = getListOfFiles();
 			int i = 0;
+			ContainerOfTiles.Children.Clear();
 			foreach (var one in googleFiles) {
 				addTile(i, one.Name);
 				i++;
@@ -680,7 +772,7 @@ namespace DC2 {
 		private void onCloudFileClick(object sender, RoutedEventArgs e) {
 			Tile tile = sender as Tile;
 			int index;
-			if(int.TryParse(tile.Name.Substring(tile.Name.Length - 1, 1), out index)) {
+			if (int.TryParse(tile.Name.Substring(tile.Name.Length - 1, 1), out index)) {
 				var file = googleFiles[index];
 				MemoryStream memo = new MemoryStream();
 				FilesResource.GetRequest getRequest = service.Files.Get(file.Id);
@@ -696,8 +788,9 @@ namespace DC2 {
 				memo.Seek(0, SeekOrigin.Begin);
 				typ_formularza formularz = DeserializeObject(memo);
 				LoadToFormularz(formularz, "cloud: " + Path.GetFileNameWithoutExtension(file.Name));
+				Drive_flyout.IsOpen = false;
 			}
-			
+
 		}
 
 		private void ScrolViewFlyout_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e) {
@@ -711,8 +804,205 @@ namespace DC2 {
 
 			e.Handled = true;
 		}
+
+		private void CloudUpload_Click(object sender, RoutedEventArgs e) {
+			if (checkValidation()) {
+				openFIleNameDIalog();
+			}
+			else {
+				OpenDialogNoValidation();
+			}
+		}
+
+		private async void openFIleNameDIalog() {
+			MetroDialogSettings dialogSettings = new MetroDialogSettings();
+			string inputDialog = await this.ShowInputAsync("Enter filename", "Filename:", dialogSettings);
+			if (inputDialog != null && inputDialog != "") {
+				Open_Dialog_Saving();
+				SerializeObjectDrive(inputDialog);
+				setNoUnsavedChanges();
+				Flyout.Header = "cloud: " + Path.GetFileNameWithoutExtension(inputDialog).ToString();
+			}
+
+		}
+
+		private void parseHTML(string kod) {
+			string final_address = "https://znajdzkodpocztowy.pl/szukaj/mk-" + kod + "/";
+			WebClient webc = new WebClient(); //Create a web client to fetch the HTML string
+			HtmlDocument doc = new HtmlAgilityPack.HtmlDocument();
+			doc.Load(webc.OpenRead(final_address), Encoding.UTF8);
+
+			//Select the whole table with data (use XPath expressions basing on the tags from the HTML source)  
+			HtmlNode mainDiv = doc.DocumentNode.SelectSingleNode("//html/body/div[1]/div[6]/div[2]/div[1]/div/h2//text()[normalize-space()]");
+
+			if (mainDiv != null) {
+				string text = mainDiv.InnerHtml;
+				if (now_editing.Adres.Miejscowosc_ulica.Contains(",")) {
+					string[] first = now_editing.Adres.Miejscowosc_ulica.Split(',');
+					first[0] = text;
+					now_editing.Adres.Miejscowosc_ulica = first[0] + "," + first[1];
+				}
+				else {
+					now_editing.Adres.Miejscowosc_ulica = text + ", " + now_editing.Adres.Miejscowosc_ulica;
+				}
+			}
+		}
+
+		private void PdfSave_Click(object sender, RoutedEventArgs e) {
+			SaveFileDialog saveFileDialog = new SaveFileDialog();
+			saveFileDialog.Filter = "PDF document (*.pdf)|*.pdf";
+			if (saveFileDialog.ShowDialog() == true) {
+				using (FileStream fs = new FileStream(saveFileDialog.FileName, FileMode.Create, FileAccess.Write, FileShare.Read)) {
+					Document document = new Document(PageSize.A4);
+					PdfWriter writer = PdfWriter.GetInstance(document, fs);
+					document.Open();
+					document.NewPage();
+					string normal = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "arial.ttf");
+
+					//Create a base font object making sure to specify IDENTITY-H
+					BaseFont bf = BaseFont.CreateFont(normal, BaseFont.IDENTITY_H, BaseFont.NOT_EMBEDDED);
+					Font normal_font = new Font(bf, 12, Font.NORMAL);
+
+					Font bold = new Font(bf, 12, Font.BOLD);
+
+					Font italic = new Font(bf, 12, Font.ITALIC);
+					Paragraph element = new Paragraph("Formularz zgłoszeniowy propozycji projektu do Budżetu Obywatelskiego", bold);
+					element.Alignment = Element.ALIGN_CENTER;
+					document.Add(element);
+
+					element = new Paragraph(" - ", normal_font);
+					element.Alignment = Element.ALIGN_CENTER;
+					document.Add(element);
+
+					PdfPTable table = new PdfPTable(7);
+					document.Add(new Paragraph("", normal_font));
+					PdfPCell cell = new PdfPCell(new Phrase("Imię i  Nazwisko Wnioskodawcy", bold));
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Imie_nazwisko, normal_font));
+					cell.Colspan = 6;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("Adres zamieszkania", bold));
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Miejscowość i ulica: " + now_editing.Adres.Miejscowosc_ulica + " Kod pocztowy: " + now_editing.Adres.Kod_pocztowy + " Nr domu: " + now_editing.Adres.Nr_domu + " Nr mieszkania: " + now_editing.Adres.Nr_mieszkania, normal_font));
+					cell.Colspan = 6;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("Kontakt z wnioskodawcą", bold));
+					cell.Rowspan = 2;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Nr tel.: " + now_editing.Kontakt.Nr_telefonu, normal_font));
+					cell.Colspan = 6;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("e-mail: " + now_editing.Kontakt.Email, normal_font));
+					cell.Colspan = 6;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("1. Tytuł projektu (będzie zamieszczony na stronie internetowej).", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Tytuł, normal_font));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("2. Lokalizacja miejsca realizacji projektu (prosimy wskazać miejsce realizacji zadania oraz nr działki, jeżeli jest to możliwe podać adres lub opisać obszar w sposób, który umożliwi jego identyfikację; w celach pomocniczych zasadne jest dołączenie mapy lub rysunku sytuacyjnego danego obszaru).", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Lokalizacja, normal_font));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("3. Jaki jest stan własnościowy terenu, na którym ma być zlokalizowany projekt (prosimy wpisać np. czy jest to teren: gminny, wspólnoty mieszkaniowej, Skarbu Państwa, spółdzielni mieszkaniowej).", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Własność_terenu.ToString(), normal_font));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("4. Opis projektu (prosimy opisać czego dotyczy projekt, co dokładnie ma być zrealizowane w ramach projektu).", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Opis, normal_font));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("5. Skrócony opis projektu (prosimy opisać w max. 6 zdaniach zasadnicze informacje o projekcie. Ten skrócony opis będzie publikowany na stronie Budżetu Obywatelskiego na etapie działań informacyjnych i głosowania).", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(now_editing.Skrót_opisu, normal_font));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("6. Szacunkowy koszt projektu (prosimy uwzględnić wszystkie możliwe składowe części zadania oraz ich szacunkowe koszty. Podanie kosztu szacunkowego jest obligatoryjne)", bold));
+					cell.Colspan = 7;
+					table.AddCell(cell);
+
+					cell = new PdfPCell(new Phrase("Składowe części zadania", italic));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_CENTER;
+					cell.Colspan = 3;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Kategoria kosztu", italic));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_CENTER;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Adres realizacji podzadania (lub “nie dotyczy”)", italic));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_CENTER;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Ilość i jednostka (lub “nie dotyczy”)", italic));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_CENTER;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase("Koszt", italic));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_CENTER;
+					table.AddCell(cell);
+					int i = 0;
+					float suma = 0;
+
+					foreach (var value in kosztList) {
+						cell = new PdfPCell(new Phrase(i + ") " + value.Nazwa, normal_font));
+						cell.Colspan = 3;
+						table.AddCell(cell);
+						cell = new PdfPCell(new Phrase(value.Kategoria.ToString(), normal_font));
+						table.AddCell(cell);
+						cell = new PdfPCell(new Phrase(value.Miejsce, normal_font));
+						table.AddCell(cell);
+						if (value.Ilość.jednostka != null) {
+							cell = new PdfPCell(new Phrase(value.Ilość.Items.ToString() + value.Ilość.jednostka.ToString(), normal_font));
+						}
+						else {
+							cell = new PdfPCell(new Phrase(value.Ilość.Items.ToString(), normal_font));
+						}
+
+						table.AddCell(cell);
+						cell = new PdfPCell(new Phrase(value.kwota, normal_font));
+						table.AddCell(cell);
+						i++;
+						float temp;
+						if (float.TryParse(value.kwota, NumberStyles.Any, CultureInfo.InvariantCulture, out temp)) {
+							suma += temp;
+						}
+					}
+
+					cell = new PdfPCell(new Phrase("Łącznie szacunkowo:", bold));
+					cell.VerticalAlignment = Element.ALIGN_CENTER;
+					cell.HorizontalAlignment = Element.ALIGN_RIGHT;
+					cell.Colspan = 6;
+					table.AddCell(cell);
+					cell = new PdfPCell(new Phrase(suma.ToString(), normal_font));
+					table.AddCell(cell);
+
+
+					document.Add(table);
+					document.Close();
+				}
+			}
+		}
 	}
 }
+
 
 
 

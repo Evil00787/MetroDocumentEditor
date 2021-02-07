@@ -168,6 +168,7 @@
 							</DataGridTemplateColumn>
 						</DataGrid.Columns>
 					</DataGrid>
+					<TextBlock x:Name="output"  HorizontalAlignment="Left" Margin="0,350,0,0" VerticalAlignment="Top"/>
 
 
 					<Controls:ProgressRing x:Name="ProgressCircle" IsActive="False" Margin="392,186,109.6,206"/>
@@ -183,11 +184,11 @@
 							<iconPacks:Modern Kind="DiskDownload"  Height="35" Width="35"/>
 							
 						</Button>
-						<Button ToolTip="Upload to cloud" x:Name="CloudUpload" Click="SaveAs_Click" Style="{DynamicResource MahApps.Metro.Styles.MetroCircleButtonStyle}" HorizontalAlignment="Left" Margin="615,2,0,0" VerticalAlignment="Top" Width="64" RenderTransformOrigin="3.288,1.603" Height="64" Grid.Column="1">
+						<Button ToolTip="Upload to cloud" x:Name="CloudUpload" Click="CloudUpload_Click" Style="{DynamicResource MahApps.Metro.Styles.MetroCircleButtonStyle}" HorizontalAlignment="Left" Margin="615,2,0,0" VerticalAlignment="Top" Width="64" RenderTransformOrigin="3.288,1.603" Height="64" Grid.Column="1">
 							
 							<iconPacks:Modern Kind="CloudAdd"  Height="35" Width="35"/>
 						</Button>
-						<Button ToolTip="Save as pdf..." x:Name="PdfSave" Click="SaveAs_Click" Style="{DynamicResource MahApps.Metro.Styles.MetroCircleButtonStyle}" HorizontalAlignment="Left" Margin="545,2,0,0" VerticalAlignment="Top" Width="64" RenderTransformOrigin="3.288,1.603" Height="64" Grid.Column="1">
+						<Button ToolTip="Save as pdf..." x:Name="PdfSave" Click="PdfSave_Click" Style="{DynamicResource MahApps.Metro.Styles.MetroCircleButtonStyle}" HorizontalAlignment="Left" Margin="545,2,0,0" VerticalAlignment="Top" Width="64" RenderTransformOrigin="3.288,1.603" Height="64" Grid.Column="1">
 							<iconPacks:Modern Kind="PageFilePdfTag"  Height="35" Width="35"/>
 						</Button>
 						<Button ToolTip="Add row" x:Name="RowAdd" Click="RowAdd_Click" Style="{DynamicResource MahApps.Metro.Styles.MetroCircleButtonStyle}" HorizontalAlignment="Left" Margin="12,2,0,0" VerticalAlignment="Top" Width="64" RenderTransformOrigin="3.288,1.603" Height="64" Grid.Column="0">
